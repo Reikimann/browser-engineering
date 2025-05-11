@@ -1,10 +1,10 @@
 import sys
-
-from browser import load
-
+import tkinter
+from browser import Browser
 
 if __name__ == "__main__":
     default_url = "file://homepage.html"
     url_str = sys.argv[1] if len(sys.argv) > 1 else default_url
 
-    load(url_str)
+    Browser().load(url_str)
+    tkinter.mainloop()
