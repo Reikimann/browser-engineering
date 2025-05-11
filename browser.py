@@ -1,9 +1,13 @@
 import socket
 import ssl
+import time
+
+MAX_REDIRECTS = 3
 
 # Key: (scheme, host, port)
 sockets = {}
-MAX_REDIRECTS = 3
+# Key: "{scheme}://{host}{path}"
+cache = {}
 
 class URL:
     def __init__(self, url):
@@ -77,7 +81,14 @@ class URL:
         address = (self.scheme, self.host, self.port)
         s = sockets.get(address)
 
-        if s is None:
+        cached_entry = cache.get(f"{self.scheme}://{self.host}{self.path}")
+        if cached_entry:
+            age = time.time() - cached_entry["timestamp"]
+            if age <= cached_entry["max-age"]:
+                return cached_entry["content"]
+
+
+        if s is None or s.fileno() == -1:
             s = socket.socket(
                 family=socket.AF_INET,
                 type=socket.SOCK_STREAM,
@@ -133,7 +144,36 @@ class URL:
         content_length = int(response_headers.get("content-length", 0))
         content = response.read(content_length).decode("utf-8")
 
+        if "cache-control" in response_headers and status == "200":
+            print("cached site")
+            cache_directives = self._parse_cache_control(response_headers["cache-control"])
+            print(cache_directives)
+
+            if "max-age" in cache_directives and "no-store" not in cache_directives:
+                url = f"{self.scheme}://{self.host}{self.path}"
+
+                cache[url] = {
+                    "content": content,
+                    "max-age": int(cache_directives["max-age"]),
+                    "timestamp": time.time()
+                }
+
         return content
+
+    def _parse_cache_control(self, header_value):
+        cache_control = {}
+        directives = header_value.split(",")
+
+        for directive in directives:
+            directive = directive.casefold().strip()
+
+            if "=" in directive:
+                key, value = directive.split("=")
+                cache_control[key] = value
+            else:
+                cache_control[directive] = True
+
+        return cache_control
 
 
 def show(content):
