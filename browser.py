@@ -1,6 +1,7 @@
 import socket
 import ssl
 import time
+import gzip
 
 MAX_REDIRECTS = 3
 
@@ -77,16 +78,17 @@ class URL:
         return content
 
     def _handle_network_request(self, num_redirects = 0):
-        global sockets
-        address = (self.scheme, self.host, self.port)
-        s = sockets.get(address)
-
+        # NOTE: Step 0: Check cache for request
         cached_entry = cache.get(f"{self.scheme}://{self.host}{self.path}")
         if cached_entry:
             age = time.time() - cached_entry["timestamp"]
             if age <= cached_entry["max-age"]:
                 return cached_entry["content"]
 
+        # NOTE: Step 1: Reuse or open a socket
+        global sockets
+        address = (self.scheme, self.host, self.port)
+        s = sockets.get(address)
 
         if s is None or s.fileno() == -1:
             s = socket.socket(
@@ -102,9 +104,11 @@ class URL:
 
             sockets[address] = s
 
+        # NOTE: Step 2: Send GET request
         headers = {
             "Host": self.host,
             "Connection": "keep-alive",
+            "Accept-Encoding": "gzip",
             "User-Agent": "yeet-browser/1.0",
         }
 
@@ -115,6 +119,7 @@ class URL:
 
         s.send(request.encode("utf-8"))
 
+        # NOTE: Step 3: Parse statusline and response headers
         response = s.makefile("rb")
         statusline = response.readline().decode("utf-8")
         version, status, explanation = statusline.split(" ", 2)
@@ -127,6 +132,7 @@ class URL:
             header, value = header_line.split(":", 1)
             response_headers[header.casefold()] = value.strip()
 
+        # NOTE: Step 4: Handle possible redirects
         if status.startswith("3") and "location" in response_headers:
             url = response_headers["location"]
 
@@ -138,16 +144,42 @@ class URL:
             else:
                 return "Error: Too many redirects"
 
-        assert "transfer-encoding" not in response_headers
-        assert "content-encoding" not in response_headers
+        # NOTE: Step 5: Read response body
+        if "content-length" in response_headers:
+            content_length = int(response_headers.get("content-length", 0))
+        else:
+            content_length = -1
 
-        content_length = int(response_headers.get("content-length", 0))
-        content = response.read(content_length).decode("utf-8")
+        if "transfer-encoding" in response_headers and response_headers["transfer-encoding"] == "chunked":
+            # NOTE: Transfer encoding work like below:
+            # <chunk-size in hex>\r\n
+            # <chunk-data>\r\n
+            content = b""
+            while True:
+                size = response.readline().strip().decode("utf-8")
+                if size == "0" or not size:
+                    response.readline()
+                    break
 
+                chunck_size = int(size, 16)
+                line = response.read(chunck_size)
+                response.read(2) # Removes the last \r\n
+                content += line
+        else:
+            content = response.read(content_length)
+
+        # NOTE: Step 6: Decompress body if needed
+        if "content-encoding" in response_headers:
+            encoding = response_headers["content-encoding"]
+            if encoding in ["gzip", "x-gzip"]:
+                content = gzip.decompress(content)
+
+        # NOTE: Step 7: Decode body to text (utf-8 encoding)
+        content = content.decode("utf-8")
+
+        # NOTE: Step 8: Cache request if allowed
         if "cache-control" in response_headers and status == "200":
-            print("cached site")
             cache_directives = self._parse_cache_control(response_headers["cache-control"])
-            print(cache_directives)
 
             if "max-age" in cache_directives and "no-store" not in cache_directives:
                 url = f"{self.scheme}://{self.host}{self.path}"
