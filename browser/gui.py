@@ -1,26 +1,32 @@
 import tkinter as tk
 from PIL import ImageTk, Image
-from url import URL
 import platform
 import emoji
+import emoji
+
+from browser.url import URL
+from browser.layout import Layout, Text, Tag, VSTEP, SCROLLBAR_WIDTH
 
 emoji_cache = {}
 
 def lex(body):
+    out = []
+
     in_tag = False
     in_entity = False
+
     entity = ""
-    text = ""
+    buffer = ""
 
     for c in body:
         if in_entity:
             if c == ";":
                 if entity == "lt":
-                    text += "<"
+                    buffer += "<"
                 elif entity == "gt":
-                    text += ">"
+                    buffer += ">"
                 else:
-                    text += f"&{entity};"
+                    buffer += f"&{entity};"
 
                 in_entity = False
                 entity = ""
@@ -31,43 +37,31 @@ def lex(body):
             entity = ""
         elif c == "<":
             in_tag = True
+            if buffer: out.append(Text(buffer))
+            buffer = ""
         elif c == ">":
             in_tag = False
-        elif not in_tag:
-            text += c
+            if buffer: out.append(Tag(buffer))
+            buffer = ""
+        else:
+            buffer += c
 
-    return text
+    if not in_tag and buffer:
+        out.append(Text(buffer))
 
-WIDTH, HEIGHT = 800, 600
-HSTEP, VSTEP = 13, 18
+    return out
+
 
 SCROLL_STEP = 100
-SCROLLBAR_WIDTH = 12
+WIDTH, HEIGHT = 800, 600
 
-def layout(body, width):
-    display_list = []
-    cursor_y, cursor_x = VSTEP, HSTEP
-
-    for c in body:
-        if c == "\n":
-            cursor_y += VSTEP
-            cursor_x = HSTEP
-        else:
-            display_list.append((cursor_x, cursor_y, c))
-            cursor_x += HSTEP
-
-            if cursor_x >= width - HSTEP:
-                cursor_y += VSTEP
-                cursor_x = HSTEP
-
-    return display_list
 
 class Browser:
     def __init__(self):
         self.screen_width = WIDTH
         self.screen_height = HEIGHT
-        self.raw_text = ""
         self.blank = False
+        self.tokens = []
 
         self.window = tk.Tk()
         self.canvas = tk.Canvas(
@@ -82,6 +76,7 @@ class Browser:
 
         self.window.bind("<Down>", self.scrolldown)
         self.window.bind("<Up>", self.scrollup)
+        # TEST: Is this necesarry on windows or mac?
         if self.system == "Linux":
             self.window.bind("<Button-5>", self.scroll_linux)
             self.window.bind("<Button-4>", self.scroll_linux)
@@ -93,23 +88,16 @@ class Browser:
 
     def resize(self, e):
         self.screen_height, self.screen_width = e.height, e.width
-        self.redraw()
-
-    def redraw(self):
-        # This is not debounced. Performance: poor
-        if self.raw_text:
-            self.display_list = layout(self.raw_text, self.screen_width)
-
+        # TODO: If not debounced -> Performance: poor
+        #self.display_list = Layout(self.tokens, self.screen_width).display_list
         self.draw()
 
     def draw(self):
         self.canvas.delete("all")
-        for x, y, c in self.display_list:
+        for x, y, c, f in self.display_list:
             if y > self.scroll + self.screen_height: continue
             if y + VSTEP < self.scroll: continue
-            # FIX: This doesnt work on multi-codepoint emojis
-            # Use emoji.is_emoji(word) check this with full words
-            if (c in emoji.EMOJI_DATA):
+            if emoji.is_emoji(c):
                 codepoints = []
                 for char in c:
                     # Format specifier: hexadecimal, 4 digits, zero-padding
@@ -117,13 +105,13 @@ class Browser:
                 emoji_png = "-".join(codepoints)
                 if emoji_png not in emoji_cache:
                     image = Image.open(f"openmoji-72x72-color/{emoji_png}.png")
-                    emoji_cache[emoji_png] = ImageTk.PhotoImage(image.resize((16, 16)))
+                    emoji_cache[emoji_png] = ImageTk.PhotoImage(image.resize((24, 24)))
 
                 self.canvas.create_image(x, y - self.scroll, anchor="nw", image=emoji_cache[emoji_png])
             else:
-                self.canvas.create_text(x, y - self.scroll, text=c)
+                self.canvas.create_text(x, y - self.scroll, anchor="nw", text=c, font=f)
 
-        if self.display_list and max(y for _, y, _ in self.display_list) + VSTEP > self.screen_height:
+        if self.display_list and self.display_list[-1][1] + VSTEP > self.screen_height:
             self.draw_scrollbar()
 
     def load(self, url_str):
@@ -132,19 +120,18 @@ class Browser:
 
         if body:
             if url.view_source:
-                self.raw_text = body
+                self.tokens = body.split()
             else:
-                self.raw_text = lex(body)
+                self.tokens = lex(body)
 
-            self.display_list = layout(self.raw_text, self.screen_width)
-
+            self.display_list = Layout(self.tokens, self.screen_width).display_list
             self.draw()
         else:
             self.blank = True
             self.display_list = []
 
     def draw_scrollbar(self):
-        max_y = max(y for _, y, _ in self.display_list) + VSTEP
+        max_y = self.display_list[-1][1] + VSTEP
         percent_shown = self.screen_height / max_y # visible content
         percent_offset = self.scroll / max_y # fraction of content scrolled
         # if 20% is visible then scrollbar thumb should be 20% of screenheight
@@ -186,7 +173,7 @@ class Browser:
         if not self.display_list:
             return
 
-        max_y = max(y for _, y, _ in self.display_list)
+        max_y = self.display_list[-1][1]
         # Max_y gives the top of the last characters y-position
         content_height = max_y + VSTEP
         max_scroll = max(0, content_height - self.screen_height)

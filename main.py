@@ -1,6 +1,6 @@
 import sys
 import tkinter
-from browser import Browser
+from browser.gui import Browser
 
 if __name__ == "__main__":
     default_url = "file://homepage.html"
