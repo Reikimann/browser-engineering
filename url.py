@@ -13,10 +13,14 @@ cache = {}
 class URL:
     def __init__(self, url):
         self.view_source = False
+        self.is_malformed = False
 
         if url.startswith("view-source:"):
             self.view_source = True
             _, url = url.split(":", 1)
+
+        if url == "about:blank":
+            self.is_malformed = True
 
         if url.startswith(("http://", "https://")):
             self.scheme, url = url.split("://", 1)
@@ -51,10 +55,13 @@ class URL:
             self.path = ""
             self.port = None
         else:
-            raise ValueError(f"Unsupported URL scheme in {url}")
+            self.is_malformed = True
 
 
     def request(self, num_redirects = 0):
+        if self.is_malformed:
+            return None
+
         if self.scheme == "data":
             content = self.data
         elif self.scheme == "file":

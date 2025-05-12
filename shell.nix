@@ -3,7 +3,9 @@
 pkgs.mkShell {
   packages = [
     (pkgs.python3.withPackages(p: with p; [
-      #requests
+      emoji
+      tkinter
+      pillow
     ]))
   ];
 }
