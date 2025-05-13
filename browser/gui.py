@@ -1,41 +1,30 @@
 import tkinter as tk
 from PIL import ImageTk, Image
 import platform
+import json
 import emoji
-import emoji
+import re
 
 from browser.url import URL
 from browser.layout import Layout, Text, Tag, VSTEP, SCROLLBAR_WIDTH
 
 emoji_cache = {}
+with open("data/entities.json", "r", encoding="utf-8") as f:
+    ENTITY_MAP = json.load(f)
+
+SCROLL_STEP = 100
+WIDTH, HEIGHT = 800, 600
+
 
 def lex(body):
     out = []
-
     in_tag = False
-    in_entity = False
+    buffer: str = ""
+    i: int = 0
 
-    entity = ""
-    buffer = ""
-
-    for c in body:
-        if in_entity:
-            if c == ";":
-                if entity == "lt":
-                    buffer += "<"
-                elif entity == "gt":
-                    buffer += ">"
-                else:
-                    buffer += f"&{entity};"
-
-                in_entity = False
-                entity = ""
-            else:
-                entity += c
-        elif c == "&":
-            in_entity = True
-            entity = ""
-        elif c == "<":
+    while i < len(body):
+        c = body[i]
+        if c == "<":
             in_tag = True
             if buffer: out.append(Text(buffer))
             buffer = ""
@@ -43,17 +32,21 @@ def lex(body):
             in_tag = False
             if buffer: out.append(Tag(buffer))
             buffer = ""
+        elif not in_tag and c == "&":
+            m = re.search(r"&.*?;", body[i:])
+            if m:
+                entity = m.group(0)
+                if entity in ENTITY_MAP:
+                    buffer += ENTITY_MAP[entity]["characters"]
+                i += len(entity) - 1
         else:
             buffer += c
+        i += 1
 
     if not in_tag and buffer:
         out.append(Text(buffer))
 
     return out
-
-
-SCROLL_STEP = 100
-WIDTH, HEIGHT = 800, 600
 
 
 class Browser:
@@ -88,8 +81,8 @@ class Browser:
 
     def resize(self, e):
         self.screen_height, self.screen_width = e.height, e.width
-        # TODO: If not debounced -> Performance: poor
-        #self.display_list = Layout(self.tokens, self.screen_width).display_list
+        # FIX: Not debounced -> Performance: poor
+        self.display_list = Layout(self.tokens, self.screen_width).display_list
         self.draw()
 
     def draw(self):
@@ -104,8 +97,8 @@ class Browser:
                     codepoints.append("{:04x}".format(ord(char)).upper())
                 emoji_png = "-".join(codepoints)
                 if emoji_png not in emoji_cache:
-                    image = Image.open(f"openmoji-72x72-color/{emoji_png}.png")
-                    emoji_cache[emoji_png] = ImageTk.PhotoImage(image.resize((24, 24)))
+                    image = Image.open(f"data/openmoji-72x72-color/{emoji_png}.png")
+                    emoji_cache[emoji_png] = ImageTk.PhotoImage(image.resize((20, 20)))
 
                 self.canvas.create_image(x, y - self.scroll, anchor="nw", image=emoji_cache[emoji_png])
             else:

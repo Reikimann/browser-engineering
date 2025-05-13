@@ -4,6 +4,17 @@ import tkinter.font
 HSTEP, VSTEP = 13, 18
 SCROLLBAR_WIDTH = 12
 
+font_cache = {}
+
+def get_font(size, weight, style):
+    key = (size, weight, style)
+    if key not in font_cache:
+        font = tkinter.font.Font(size=size, weight=weight, slant=style)
+        label = tkinter.Label(font=font)
+        font_cache[key] = (font, label)
+    return font_cache[key][0]
+
+
 class Text:
     def __init__(self, text):
         self.text = text
@@ -15,31 +26,45 @@ class Tag:
 class Layout:
     def __init__(self, tokens, width):
         self.display_list = []
-        self.cursor_y = VSTEP
-        self.cursor_x = HSTEP
-        self.width = width
+        self.line = []
+
+        self.cursor_y: float = VSTEP
+        self.cursor_x: float = HSTEP
+        self.width: int = width
+
         self.weight: Literal["normal", "bold"] = "normal"
         self.style: Literal["roman", "italic"] = "roman"
+        self.size: int = 12
 
         for tok in tokens:
             self.token(tok)
 
+        self.flush()
+
+    def flush(self):
+        if not self.line: return
+        metrics = [font.metrics() for _, _, font in self.line]
+        max_ascent = max([metric["ascent"] for metric in metrics])
+        baseline = self.cursor_y + 1.25 * max_ascent
+
+        for x, word, font in self.line:
+            y = baseline - font.metrics("ascent")
+            self.display_list.append((x, y, word, font))
+
+        max_descent = max([metric["descent"] for metric in metrics])
+        self.cursor_y = baseline + 1.25 * max_descent
+        self.cursor_x = HSTEP
+        self.line = []
+
     def word(self, word):
-        font = tkinter.font.Font(
-            size=16,
-            weight=self.weight,
-            slant=self.style
-        )
-        width = font.measure(word)
-        linebreak = font.metrics("linespace") * 1.25
-        space = font.measure(" ")
+        font = get_font(self.size, self.weight, self.style)
+        w = font.measure(word)
 
-        if self.cursor_x + width + space > self.width - SCROLLBAR_WIDTH:
-            self.cursor_y += linebreak
-            self.cursor_x = HSTEP
+        if self.cursor_x + w > self.width - HSTEP - SCROLLBAR_WIDTH:
+            self.flush()
 
-        self.display_list.append((self.cursor_x, self.cursor_y, word, font))
-        self.cursor_x += width + space
+        self.line.append((self.cursor_x, word, font))
+        self.cursor_x += w + font.measure(" ")
 
 
     def token(self, tok):
@@ -56,3 +81,16 @@ class Layout:
             self.weight = "bold"
         elif tok.tag == "/b":
             self.weight = "normal"
+        elif tok.tag == "small":
+            self.size -= 2
+        elif tok.tag == "/small":
+            self.size += 2
+        elif tok.tag == "big":
+            self.size += 4
+        elif tok.tag == "/big":
+            self.size -= 4
+        elif tok.tag == "br":
+            self.flush()
+        elif tok.tag == "/p":
+            self.flush()
+            self.cursor_y += VSTEP
