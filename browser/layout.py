@@ -90,6 +90,9 @@ class Layout:
         space = get_measure(" ", self.size, self.weight, self.style)
 
         if self.cursor_x + width < self.screen_width - HSTEP - SCROLLBAR_WIDTH:
+            if "\u00AD" in word:
+                word = word.replace("\u00AD", "")
+
             self.line.append({"x": self.cursor_x,
                               "word": word,
                               "size": self.size,
@@ -99,8 +102,47 @@ class Layout:
                               "superscript": self.superscript})
             self.cursor_x += width + space
         else:
-            # TODO: Check here for soft hyphens
-            self.flush()
+            if "\u00AD" in word:
+                parts = word.split("\u00AD")
+                hyphen_w = get_measure("-", self.size, self.weight, self.style)
+                fitted_parts = []
+
+                for part in parts:
+                    part_w = get_measure(part, self.size, self.weight, self.style)
+                    if self.cursor_x + part_w + hyphen_w < self.screen_width - HSTEP - SCROLLBAR_WIDTH:
+                        self.line.append({"x": self.cursor_x,
+                                          "word": part,
+                                          "size": self.size,
+                                          "weight": self.weight,
+                                          "style": self.style,
+                                          "centering": self.centering,
+                                          "superscript": self.superscript})
+                        self.cursor_x += part_w
+                        fitted_parts.append(part)
+                    else:
+                        break
+
+                leftover_parts = "".join([p for p in parts if p not in fitted_parts])
+                self.line.append({"x": self.cursor_x,
+                                  "word": "-",
+                                  "size": self.size,
+                                  "weight": self.weight,
+                                  "style": self.style,
+                                  "centering": self.centering,
+                                  "superscript": self.superscript})
+                # Nextline:
+                self.flush()
+                self.cursor_x = HSTEP
+                self.line.append({"x": self.cursor_x,
+                                  "word": leftover_parts,
+                                  "size": self.size,
+                                  "weight": self.weight,
+                                  "style": self.style,
+                                  "centering": self.centering,
+                                  "superscript": self.superscript})
+                self.cursor_x += get_measure(leftover_parts, self.size, self.weight, self.style) + space
+            else:
+                self.flush()
 
     def token(self, tok):
         if isinstance(tok, str):
