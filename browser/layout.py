@@ -35,7 +35,8 @@ class Tag:
 class Layout:
     def __init__(self, tokens, screen_width):
         self.display_list = []
-        self.line = [] # [{ x: , word: , size: , weight: , style: , centering: ,}]
+        # [{ x: , word: , size: , weight: , style: , centering: , superscript: ,}]
+        self.line = []
 
         self.cursor_y: float = VSTEP
         self.cursor_x: float = HSTEP
@@ -43,8 +44,10 @@ class Layout:
 
         self.weight: Literal["normal", "bold"] = "normal"
         self.style: Literal["roman", "italic"] = "roman"
-        self.centering: bool = False
         self.size: int = 12
+
+        self.centering: bool = False
+        self.superscript: bool = False
 
         for tok in tokens:
             self.token(tok)
@@ -69,7 +72,12 @@ class Layout:
 
         for i, entry in enumerate(self.line):
             font = fonts[i]
-            y = baseline - metrics[i]["ascent"]
+
+            if entry["superscript"]:
+                y = baseline - metrics[i]["linespace"]
+            else:
+                y = baseline - metrics[i]["ascent"]
+
             self.display_list.append((entry["x"] + centering_delta, y, entry["word"], font))
 
         max_descent = max([metric["descent"] for metric in metrics])
@@ -87,9 +95,11 @@ class Layout:
                               "size": self.size,
                               "weight": self.weight,
                               "style": self.style,
-                              "centering": self.centering})
+                              "centering": self.centering,
+                              "superscript": self.superscript})
             self.cursor_x += width + space
         else:
+            # TODO: Check here for soft hyphens
             self.flush()
 
     def token(self, tok):
@@ -114,12 +124,21 @@ class Layout:
             self.size += 4
         elif tok.tag == "/big":
             self.size -= 4
+        elif tok.tag == "sup":
+            self.superscript = True
+            self.size = int(self.size / 2)
+        elif tok.tag == "/sup":
+            self.superscript = False
+            self.size = int(self.size * 2)
         elif tok.tag == "br" or tok.tag == "br /":
             self.flush()
         elif tok.tag == "/p":
             self.flush()
             self.cursor_y += VSTEP
-        elif tok.tag == 'h1 class="title"':
-            self.centering = True
+        elif tok.tag.startswith("h1"):
+            self.size = int(self.size * 1.5)
+            if 'class="title"' in tok.tag:
+                self.centering = True
         elif tok.tag == '/h1':
+            self.size = int(self.size / 1.5)
             self.centering = False
