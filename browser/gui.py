@@ -1,52 +1,16 @@
 import tkinter as tk
 from PIL import ImageTk, Image
 import platform
-import json
 import emoji
-import re
 
 from browser.url import URL
-from browser.layout import Layout, Text, Tag, VSTEP, SCROLLBAR_WIDTH
+from browser.layout import Layout, VSTEP, SCROLLBAR_WIDTH
+from browser.html_parser import HTMLParser, Text, Element, print_tree
 
 emoji_cache = {}
-with open("data/entities.json", "r", encoding="utf-8") as f:
-    ENTITY_MAP = json.load(f)
 
 SCROLL_STEP = 100
 WIDTH, HEIGHT = 800, 600
-
-
-def lex(body):
-    out = []
-    in_tag = False
-    buffer: str = ""
-    i: int = 0
-
-    while i < len(body):
-        c = body[i]
-        if c == "<":
-            in_tag = True
-            if buffer: out.append(Text(buffer))
-            buffer = ""
-        elif c == ">":
-            in_tag = False
-            if buffer: out.append(Tag(buffer))
-            buffer = ""
-        elif not in_tag and c == "&":
-            m = re.search(r"&.*?;", body[i:])
-            if m:
-                entity = m.group(0)
-                if entity in ENTITY_MAP:
-                    buffer += ENTITY_MAP[entity]["characters"]
-                i += len(entity) - 1
-        else:
-            buffer += c
-        i += 1
-
-    if not in_tag and buffer:
-        out.append(Text(buffer))
-
-    return out
 
 
 class Browser:
@@ -54,7 +18,7 @@ class Browser:
         self.screen_width = WIDTH
         self.screen_height = HEIGHT
         self.blank = False
-        self.tokens = []
+        self.nodes = []
 
         self.window = tk.Tk()
         self.canvas = tk.Canvas(
@@ -82,7 +46,7 @@ class Browser:
     def resize(self, e):
         self.screen_height, self.screen_width = e.height, e.width
         # FIX: Not debounced -> Performance: poor
-        self.display_list = Layout(self.tokens, self.screen_width).display_list
+        self.display_list = Layout(self.nodes, self.screen_width).display_list
         self.draw()
 
     def draw(self):
@@ -112,12 +76,13 @@ class Browser:
         body = url.request()
 
         if body:
+            # FIX: View-source
             if url.view_source:
-                self.tokens = body.split()
+                self.nodes = body.split()
             else:
-                self.tokens = lex(body)
+                self.nodes = HTMLParser(body).parse()
 
-            self.display_list = Layout(self.tokens, self.screen_width).display_list
+            self.display_list = Layout(self.nodes, self.screen_width).display_list
             self.draw()
         else:
             self.blank = True
@@ -146,7 +111,6 @@ class Browser:
     # NOTE: Darwin and Windows scrolling not tested
     # It's currently possible to scroll past bottom
     def scrollmouse(self, e):
-        print(e)
         if self.system == "Windows":
             delta = -1 * (e.delta // 120)
         elif self.system == "Darwin":
