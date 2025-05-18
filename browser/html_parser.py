@@ -125,21 +125,26 @@ class HTMLParser:
             else:
                 break
 
-    # TODO: Update to use regex to capture values containing whitespace
-    # This is just a basic implementation; it has errors:
-    # It captures the optional self char "/" as an attribute name
+    ATTRIBUTE_REGEX = re.compile(r'''
+        (?P<name>[^\s="'>/=]+)                  # Attribute name
+        (?:\s*=\s*
+            (?P<value>                          # Attribute Value
+                "[^"]*"                         # Double-quoted
+                | '[^']*'                       # Single-quoted
+                | [^\s"'=<>`]+                  # Unquoted
+            )
+        )?                                      # Empty attribute (=value is optional)
+    ''', re.VERBOSE)
+
     def get_attributes(self, text):
-        parts = text.split()
+        parts = text.split(None, 1)
         tag = parts[0].casefold()
         attributes = {}
-        for attrpair in parts[1:]:
-            if "=" in attrpair:
-                key, value = attrpair.split("=", 1)
-                if len(value) > 2 and value[0] in ["'", "\""]:
-                    value = value[1:-1]
-                attributes[key.casefold()] = value
-            else:
-                attributes[attrpair.casefold()] = ""
+
+        if len(parts) > 1:
+            attribute_text = parts[1]
+            for match in self.ATTRIBUTE_REGEX.finditer(attribute_text):
+                name = match.group("name").casefold()
+                value = match.group("value")
+                attributes[name] = value.strip("\"'") if value else ""
         return tag, attributes
-
-
