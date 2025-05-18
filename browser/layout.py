@@ -47,6 +47,7 @@ class Layout:
 
         self.centering: bool = False
         self.superscript: bool = False
+        # NOTE: view-source: doesnt work rn
         self.pre: bool = False
 
         # [{ x: , word: , size: , weight: , style: , centering: , superscript: ,}]
@@ -177,6 +178,7 @@ class Layout:
                 self.centering = True
         elif element.tag == "pre":
             self.style += " mono"
+            self.pre = True
 
     def close_tag(self, element: Element):
         if element.tag == "i":
@@ -202,6 +204,7 @@ class Layout:
         # FIX: This doesn't preserve whitespace `isspace() return`
         elif element.tag == "pre":
             self.style = self.style.replace("mono", "").strip()
+            self.pre = False
 
     def recurse(self, tree: Union[str, Text, Element]):
         if isinstance(tree, str):

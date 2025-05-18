@@ -17,9 +17,14 @@ class Element:
         self.children = []
         self.parent = parent
 
-    # TODO: Add attributes back to the element with repr
     def __repr__(self) -> str:
-        return f"<{self.tag}>"
+        if self.attributes:
+            attrs = " ".join(
+                f'{k}="{v}"' if v else k for k, v in self.attributes.items()
+            )
+            return f"<{self.tag} {attrs}>"
+        else:
+            return f"<{self.tag}>"
 
 
 with open("data/entities.json", "r", encoding="utf-8") as f:
@@ -47,31 +52,38 @@ class HTMLParser:
 
     def parse(self):
         in_tag = False
+        in_comment = False
         buffer: str = ""
         i: int = 0
 
         while i < len(self.body):
             c = self.body[i]
             if c == "<":
-                in_tag = True
-                if buffer: self.add_text(buffer)
-                buffer = ""
+                if i + 4 < len(self.body) and self.body[i + 1:i + 4] == "!--":
+                    in_comment = True
+                if not in_comment:
+                    in_tag = True
+                    if buffer: self.add_text(buffer)
+                    buffer = ""
             elif c == ">":
-                in_tag = False
-                if buffer: self.add_tag(buffer)
-                buffer = ""
-            elif not in_tag and c == "&":
+                if not in_comment:
+                    in_tag = False
+                    if buffer: self.add_tag(buffer)
+                    buffer = ""
+                if self.body[i - 2:i] == "--":
+                    in_comment = False
+            elif not in_comment and not in_tag and c == "&":
                 m = re.search(r"&.*?;", self.body[i:])
                 if m:
                     entity = m.group(0)
                     if entity in ENTITY_MAP:
                         buffer += ENTITY_MAP[entity]["characters"]
                     i += len(entity) - 1
-            else:
+            elif not in_comment:
                 buffer += c
             i += 1
 
-        if not in_tag and buffer:
+        if not in_comment and not in_tag and buffer:
             self.add_text(buffer)
 
         return self.finish()
