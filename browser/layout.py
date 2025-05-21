@@ -1,4 +1,7 @@
 from typing import Literal, Union
+
+import emoji
+from browser.draw import DrawRect, DrawText, DrawEmoji
 from browser.html_parser import Text, Element
 import tkinter.font
 
@@ -32,31 +35,143 @@ def get_measure(word, size, weight, style):
         measure_cache[key] = measure
     return measure_cache[key]
 
+def paint_tree(layout_object, display_list):
+    display_list.extend(layout_object.paint())
 
-class Layout:
-    def __init__(self, tree, screen_width):
+    for child in layout_object.children:
+        paint_tree(child, display_list)
+
+class DocumentLayout:
+    def __init__(self, node, screen_width):
+        self.node = node
+        self.parent = None
+        self.children = []
+
+        self.screen_width = screen_width
+        self.x = None
+        self.y = None
+        self.width = None
+        self.height = None
+
+    def layout(self):
+        child = BlockLayout(self.node, self, None)
+        self.children.append(child)
+
+        self.width = self.screen_width - 2*HSTEP
+        self.x = HSTEP
+        self.y = VSTEP
+        child.layout()
+        self.height = child.height
+
+    def paint(self):
+        return []
+
+
+class BlockLayout:
+    BLOCK_ELEMENTS = [
+        "html", "body", "article", "section", "nav", "aside",
+        "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "header",
+        "footer", "address", "p", "hr", "pre", "blockquote",
+        "ol", "ul", "menu", "li", "dl", "dt", "dd", "figure",
+        "figcaption", "main", "div", "table", "form", "fieldset",
+        "legend", "details", "summary"
+    ]
+
+    def __init__(self, node, parent, previous):
+        self.node = node
+        self.parent = parent
+        self.previous = previous
+        self.children = []
         self.display_list = []
 
-        self.cursor_y: float = VSTEP
-        self.cursor_x: float = HSTEP
-        self.screen_width: int = screen_width
+        self.x = None
+        self.y = None
+        self.width = None
+        self.height = None
 
-        self.weight: Literal["normal", "bold"] = "normal"
-        self.style: Literal["roman", "italic", "roman mono", "italic mono"] = "roman"
-        self.size: int = 12
+    def paint(self):
+        cmds = []
+        if isinstance(self.node, Element) and (
+            self.node.tag == "pre" or (
+                self.node.tag == "nav" and "links" in self.node.attributes.get("class", "")
+            )):
+            x2, y2 = self.x + self.width, self.y + self.height
+            rect = DrawRect(self.x, self.y, x2, y2, "lightgray")
+            cmds.append(rect)
+        if isinstance(self.node, Element) and self.node.tag == "li" and \
+            isinstance(self.node.parent, Element) and self.node.parent.tag == "ul":
+            x2 = self.x + 4
+            y1 = self.y + self.height/2 - 2
+            y2 = y1 + 4
+            cmds.append(DrawRect(self.x, y1, x2, y2, "black"))
 
-        self.centering: bool = False
-        self.superscript: bool = False
-        # NOTE: view-source: doesnt work rn
-        self.pre: bool = False
+        if self.layout_mode() == "inline":
+            for x, y, word, font in self.display_list:
+                if emoji.is_emoji(word):
+                    cmds.append(DrawEmoji(x, y, word))
+                else:
+                    cmds.append(DrawText(x, y, word, font))
+        return cmds
 
-        # [{ x: , word: , size: , weight: , style: , centering: , superscript: ,}]
-        self.line = []
-        self.recurse(tree)
-        self.flush()
+    def layout_mode(self):
+        if isinstance(self.node, Text):
+            return "inline"
+        elif any([isinstance(child, Element) and \
+                  child.tag in self.BLOCK_ELEMENTS
+                  for child in self.node.children]):
+            return "block"
+        elif self.node.children:
+            return "inline"
+        else:
+            return "block"
+
+
+    def layout(self):
+        self.x = self.parent.x + (HSTEP if isinstance(self.parent.node, Element) and self.parent.node.tag == "li" else 0)
+        self.width = self.parent.width
+
+        if self.previous:
+            self.y = self.previous.y + self.previous.height
+        else:
+            self.y = self.parent.y
+
+        mode = self.layout_mode()
+        if mode == "block":
+            previous = None
+            for child in self.node.children:
+                if isinstance(child, Element) and child.tag == "head":
+                    continue
+                next = BlockLayout(child, self, previous)
+                self.children.append(next)
+                previous = next
+        else:
+            self.cursor_y: float = 0
+            self.cursor_x: float = 0
+
+            self.weight: Literal["normal", "bold"] = "normal"
+            self.style: Literal["roman", "italic", "roman mono", "italic mono"] = "roman"
+            self.size: int = 14
+
+            self.centering: bool = False
+            self.superscript: bool = False
+            self.pre: bool = False
+
+            # [{ x: , word: , size: , weight: , style: , centering: , superscript: ,}]
+            self.line = []
+            self.recurse(self.node)
+            self.flush()
+
+        for child in self.children:
+            child.layout()
+
+        if mode == "block":
+            self.height = sum([child.height for child in self.children])
+        else:
+            self.height = self.cursor_y
 
     def flush(self):
-        if not self.line: return
+        if not self.line:
+            return
 
         fonts = [get_font(entry["size"], entry["weight"], entry["style"]) for entry in self.line]
         metrics = [font.metrics() for font in fonts]
@@ -67,7 +182,7 @@ class Layout:
             last_entry = self.line[-1]
             last_width = get_measure(last_entry["word"], last_entry["size"], last_entry["weight"], last_entry["style"])
             line_width = self.line[0]["x"] + last_entry["x"] + last_width
-            centering_delta = (self.screen_width - line_width) / 2
+            centering_delta = (self.width - line_width) / 2
         else:
             centering_delta = 0
 
@@ -75,15 +190,19 @@ class Layout:
             font = fonts[i]
 
             if entry["superscript"]:
-                y = baseline - metrics[i]["linespace"]
+                y = self.y + baseline - metrics[i]["linespace"]
             else:
-                y = baseline - metrics[i]["ascent"]
+                y = self.y + baseline - metrics[i]["ascent"]
 
-            self.display_list.append((entry["x"] + centering_delta, y, entry["word"], font))
+            x = self.x + entry["x"] + centering_delta
+            if isinstance(self.node, Element) and self.node.tag == "li":
+                x += HSTEP
+
+            self.display_list.append((x, y, entry["word"], font))
 
         max_descent = max([metric["descent"] for metric in metrics])
         self.cursor_y = baseline + 1.25 * max_descent
-        self.cursor_x = HSTEP
+        self.cursor_x = 0
         self.line = []
 
     def word(self, word):
@@ -95,14 +214,18 @@ class Layout:
         width = get_measure(word, self.size, self.weight, self.style)
         space = get_measure(" ", self.size, self.weight, self.style)
 
-        if self.cursor_x + width + space <= self.screen_width - HSTEP - SCROLLBAR_WIDTH:
-            self.line.append({"x": self.cursor_x,
-                              "word": word,
-                              "size": self.size,
-                              "weight": self.weight,
-                              "style": self.style,
-                              "centering": self.centering,
-                              "superscript": self.superscript})
+        if self.pre:
+            if word == "\n":
+                self.flush()
+            elif self.cursor_x + width <= self.width - SCROLLBAR_WIDTH:
+                self.line.append(self.create_word(word))
+                self.cursor_x += width
+            else:
+                self.flush()
+                self.line.append(self.create_word(word))
+                self.cursor_x += width
+        elif self.cursor_x + width + space <= self.width - SCROLLBAR_WIDTH:
+            self.line.append(self.create_word(word))
             self.cursor_x += width + space
         else:
             if old_word != "" and "\u00AD" in old_word:
@@ -112,14 +235,8 @@ class Layout:
 
                 for part in parts:
                     part_w = get_measure(part, self.size, self.weight, self.style)
-                    if self.cursor_x + part_w + hyphen_w < self.screen_width - HSTEP - SCROLLBAR_WIDTH:
-                        self.line.append({"x": self.cursor_x,
-                                          "word": part,
-                                          "size": self.size,
-                                          "weight": self.weight,
-                                          "style": self.style,
-                                          "centering": self.centering,
-                                          "superscript": self.superscript})
+                    if self.cursor_x + part_w + hyphen_w < self.width - SCROLLBAR_WIDTH:
+                        self.line.append(self.create_word(part))
                         self.cursor_x += part_w
                         fitted_parts.append(part)
                     else:
@@ -127,33 +244,26 @@ class Layout:
 
                 leftover_parts = "".join(parts[len(fitted_parts):])
                 if leftover_parts:
-                    self.line.append({"x": self.cursor_x,
-                                      "word": "-",
-                                      "size": self.size,
-                                      "weight": self.weight,
-                                      "style": self.style,
-                                      "centering": self.centering,
-                                      "superscript": self.superscript})
+                    self.line.append(self.create_word("-"))
                     # Nextline:
                     self.flush()
-                    self.line.append({"x": self.cursor_x,
-                                      "word": leftover_parts,
-                                      "size": self.size,
-                                      "weight": self.weight,
-                                      "style": self.style,
-                                      "centering": self.centering,
-                                      "superscript": self.superscript})
+                    self.line.append(self.create_word(leftover_parts))
                     self.cursor_x += get_measure(leftover_parts, self.size, self.weight, self.style) + space
             else:
                 self.flush()
-                self.line.append({"x": self.cursor_x,
-                                  "word": word,
-                                  "size": self.size,
-                                  "weight": self.weight,
-                                  "style": self.style,
-                                  "centering": self.centering,
-                                  "superscript": self.superscript})
+                self.line.append(self.create_word(word))
                 self.cursor_x += width + space
+
+    def create_word(self, word, x=None, size=None, weight=None, style=None, centering=None, superscript=None):
+        return {
+            "x": x if x else self.cursor_x,
+            "word": word,
+            "size": size if size else self.size,
+            "weight": weight if weight else self.weight,
+            "style": style if style else self.style,
+            "centering": centering if centering else self.centering,
+            "superscript": superscript if superscript else self.superscript
+        }
 
     def open_tag(self, element: Element):
         if element.tag == "i":
@@ -177,7 +287,8 @@ class Layout:
             if "title" in element.attributes.get("class", ""):
                 self.centering = True
         elif element.tag == "pre":
-            self.style += " mono"
+            if "mono" not in self.style:
+                self.style += " mono"
             self.pre = True
 
     def close_tag(self, element: Element):
@@ -201,16 +312,28 @@ class Layout:
         elif element.tag == 'h1':
             self.size = int(self.size / 1.5)
             self.centering = False
-        # FIX: This doesn't preserve whitespace `isspace() return`
         elif element.tag == "pre":
             self.style = self.style.replace("mono", "").strip()
             self.pre = False
 
     def recurse(self, tree: Union[str, Text, Element]):
-        if isinstance(tree, str):
-            self.word(tree)
-        elif isinstance(tree, Text):
-            for word in tree.text.split():
+        if isinstance(tree, Text):
+            words = []
+            if self.pre:
+                word = ""
+                for c in tree.text:
+                    if c == " " or c == "\n":
+                        if word:
+                            words.append(word)
+                        word = ""
+                        words.append(c)
+                    else:
+                        word += c
+                if word:
+                    words.append(word)
+            else:
+                words = tree.text.split()
+            for word in words:
                 self.word(word)
         else:
             self.open_tag(tree)
