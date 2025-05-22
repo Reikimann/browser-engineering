@@ -1,6 +1,7 @@
 import tkinter as tk
 import platform
 
+from browser.css_parser import style
 from browser.url import URL
 from browser.layout import DocumentLayout, VSTEP, SCROLLBAR_WIDTH, paint_tree
 from browser.html_parser import HTMLParser
@@ -80,6 +81,7 @@ class Browser:
         else:
             self.nodes = HTMLParser(body).parse()
 
+        style(self.nodes)
         self.redraw()
 
     def draw_scrollbar(self):

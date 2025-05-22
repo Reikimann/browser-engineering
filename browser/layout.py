@@ -91,13 +91,18 @@ class BlockLayout:
 
     def paint(self):
         cmds = []
-        if isinstance(self.node, Element) and (
-            self.node.tag == "pre" or (
-                self.node.tag == "nav" and "links" in self.node.attributes.get("class", "")
-            )):
-            x2, y2 = self.x + self.width, self.y + self.height
-            rect = DrawRect(self.x, self.y, x2, y2, "lightgray")
-            cmds.append(rect)
+        bgcolor = self.node.style.get("background-color", "transparent")
+        if bgcolor != "transparent":
+            x2 = self.x + self.width
+            y2 = self.y + self.height
+            cmds.append(DrawRect(self.x, self.y, x2, y2, bgcolor))
+        #if isinstance(self.node, Element) and (
+        #    self.node.tag == "pre" or (
+        #        self.node.tag == "nav" and "links" in self.node.attributes.get("class", "")
+        #    )):
+        #    x2, y2 = self.x + self.width, self.y + self.height
+        #    rect = DrawRect(self.x, self.y, x2, y2, "lightgray")
+        #    cmds.append(rect)
         if isinstance(self.node, Element) and self.node.tag == "li" and \
             isinstance(self.node.parent, Element) and self.node.parent.tag == "ul":
             x2 = self.x + 4
