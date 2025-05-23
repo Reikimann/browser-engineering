@@ -71,6 +71,20 @@ class URL:
 
         return content
 
+    def resolve(self, url):
+        if "://" in url: return URL(url) # Absolute
+        if not url.startswith("/"):      # Relative to current path
+            dir, _ = self.path.rsplit("/", 1)
+            while url.startswith("../"): # Relative with ../
+                _, url = url.split("/", 1)
+                if "/" in dir:
+                    dir, _ = dir.rsplit("/", 1)
+            url = dir + "/" + url
+        if url.startswith("//"):         # Protocol-relative URL
+            return URL(self.scheme + ":" + url)
+        else:                            # Root-relative path
+            return URL(self.scheme + "://" + self.host + \
+                ":" + str(self.port) + url)
 
     def _handle_file_request(self):
         if self.path == "":

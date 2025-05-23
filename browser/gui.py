@@ -1,13 +1,21 @@
 import tkinter as tk
+import tkinter.font
 import platform
 
-from browser.css_parser import style
+from browser.css_parser import CSSParser, cascade_priority, style
 from browser.url import URL
 from browser.layout import DocumentLayout, VSTEP, SCROLLBAR_WIDTH, paint_tree
-from browser.html_parser import HTMLParser
+from browser.html_parser import Element, HTMLParser
 
 SCROLL_STEP = 100
 WIDTH, HEIGHT = 800, 600
+DEFAULT_STYLE_SHEET = CSSParser(open("data/browser.css").read()).parse()
+
+def tree_to_list(tree, list):
+    list.append(tree)
+    for child in tree.children:
+        tree_to_list(child, list)
+    return list
 
 
 class Browser:
@@ -22,7 +30,8 @@ class Browser:
         self.canvas = tk.Canvas(
             self.window,
             width=self.screen_width,
-            height=self.screen_height
+            height=self.screen_height,
+            bg="white"
         )
         self.canvas.pack(fill=tk.BOTH, expand=1)
 
@@ -81,7 +90,24 @@ class Browser:
         else:
             self.nodes = HTMLParser(body).parse()
 
-        style(self.nodes)
+        rules = DEFAULT_STYLE_SHEET.copy()
+        links = [node.attributes["href"]
+                for node in tree_to_list(self.nodes, [])
+                if isinstance(node, Element)
+                and node.tag == "link"
+                and node.attributes.get("rel") == "stylesheet"
+                and "href" in node.attributes]
+
+        for link in links:
+            style_url = url.resolve(link)
+            try: # Ingores style sheets that fail to download
+                body = style_url.request()
+            except Exception as e:
+                print(e)
+                continue
+            rules.extend(CSSParser(body).parse())
+
+        style(self.nodes, sorted(rules, key=cascade_priority))
         self.redraw()
 
     def draw_scrollbar(self):
