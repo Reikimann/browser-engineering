@@ -1,11 +1,33 @@
 from browser.html_parser import Element
+import tkinter.font as tkfont
 
 INHERITED_PROPERTIES = {
+    "font-family": "sans-serif",
     "font-size": "16px",
     "font-style": "normal",
     "font-weight": "normal",
-    "color": "black"
+    "color": "black",
+    "white-space": "normal",
 }
+
+SYSTEM_FONTS = set()
+def init_fonts(root):
+    global SYSTEM_FONTS
+    SYSTEM_FONTS = set(tkfont.families(root))
+
+def check_available_fonts(font):
+    if font in {"sans-serif", "serif", "monospace"}:
+        return True
+
+    return font in SYSTEM_FONTS
+
+# TODO: Remove this after chapter 7
+def processDimension(attr, node):
+    if attr in node.style and node.style[attr].endswith("px"):
+        value = float(node.style[attr][:-2])
+        if value < 0:
+            value = "auto"
+        node.style[attr] = value
 
 def style(node, rules):
     node.style = {}
@@ -25,17 +47,29 @@ def style(node, rules):
         pairs = CSSParser(node.attributes["style"]).body()
         for property, value in pairs.items():
             node.style[property] = value
-    # Inheriting font size percentages. Using "computed styles"
-    if node.style["font-size"].endswith("%"):
+    # Inheriting font size percentages and em. Using "computed styles"
+    if node.style["font-size"].endswith(("%", "em")):
         if node.parent:
             parent_font_size = node.parent.style["font-size"]
         else:
             # if the root `html` elements font-size uses percentages,
             # then its relative to the default font-size
             parent_font_size = INHERITED_PROPERTIES["font-size"]
-        node_pct = float(node.style["font-size"][:-1]) / 100
+
+        node_size = node.style["font-size"]
         parent_px = float(parent_font_size[:-2])
-        node.style["font-size"] = f"{node_pct * parent_px}px"
+        if node_size.endswith("%"):
+            node_pct = float(node_size[:-1]) / 100
+            node.style["font-size"] = f"{node_pct * parent_px}px"
+        elif node_size.endswith("em"):
+            node_size = float(node_size[:-2])
+            node.style["font-size"] = f"{node_size * parent_px}px"
+    elif node.style["font-size"] == "0":
+        node.style["font-size"] = "0px"
+
+    # TODO: https://github.com/Spacetoaster/toy-browser/commit/8b75f0f0f1120b96f40ea2a55cf63a19a62b2d45
+    # TODO: Remove this after chapter 7
+    processDimension("height", node)
 
     for child in node.children:
         style(child, rules)
@@ -52,6 +86,25 @@ class TagSelector:
     def matches(self, node):
         return isinstance(node, Element) and self.tag == node.tag
 
+class ClassSelector:
+    def __init__(self, className):
+        self.className = className
+        self.priority = 10
+
+    def matches(self, node):
+        return isinstance(node, Element) and \
+            self.className in node.attributes.get("class", "").split()
+
+class IdSelector:
+    def __init__(self, id):
+        self.id = id
+        self.priority = 20
+
+    def matches(self, node):
+        if not isinstance(node, Element): return False
+        node_id = node.attributes.get("id", "")
+        return self.id == node_id
+
 class DescendantSelector:
     def __init__(self, ancestor, descendant):
         self.ancestor = ancestor
@@ -66,16 +119,26 @@ class DescendantSelector:
         return False
 
 class CSSParser:
+    SPECIAL_CHARACTERS = "#-.%,!\"'"
+
     def __init__(self, s):
         self.s = s
         self.i = 0
 
+    def get_selector_type(self, selector):
+        if selector.startswith("."):
+            out = ClassSelector(selector[1:])
+        elif selector.startswith("#"):
+            out = IdSelector(selector[1:])
+        else:
+            out = TagSelector(selector.casefold())
+        return out
+
     def selector(self):
-        out = TagSelector(self.word().casefold())
+        out = self.get_selector_type(self.word())
         self.whitespace()
         while self.i < len(self.s) and self.s[self.i] != "{":
-            tag = self.word()
-            descendant = TagSelector(tag.casefold())
+            descendant = self.get_selector_type(self.word())
             out = DescendantSelector(out, descendant)
             self.whitespace()
         return out
@@ -107,13 +170,28 @@ class CSSParser:
     def word(self):
         start = self.i
         while self.i < len(self.s):
-            if self.s[self.i].isalnum() or self.s[self.i] in "#-.%":
+            if self.s[self.i].isalnum() or self.s[self.i] in self.SPECIAL_CHARACTERS:
                 self.i += 1
             else:
                 break
         if not (self.i > start):
             raise Exception(
                 f"Parsing error at position {self.i}: expected a word \
+                but got '{self.s[self.i:]}'"
+            )
+        return self.s[start:self.i]
+
+    def value(self):
+        start = self.i
+        while self.i < len(self.s):
+            if self.s[self.i].isalnum() or self.s[self.i].isspace() or \
+                self.s[self.i] in self.SPECIAL_CHARACTERS:
+                self.i += 1
+            else:
+                break
+        if not (self.i > start):
+            raise Exception(
+                f"Parsing error at position {self.i}: expected a value \
                 but got '{self.s[self.i:]}'"
             )
         return self.s[start:self.i]
@@ -131,7 +209,7 @@ class CSSParser:
         self.whitespace()
         self.literal(":")
         self.whitespace()
-        value = self.word()
+        value = self.value()
         return property.casefold(), value
 
     def body(self):

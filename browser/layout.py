@@ -1,6 +1,5 @@
-from typing import Literal, Union
-
 import emoji
+from browser.css_parser import check_available_fonts
 from browser.draw import DrawRect, DrawText, DrawEmoji
 from browser.html_parser import Text, Element
 import tkinter.font
@@ -11,26 +10,22 @@ SCROLLBAR_WIDTH = 12
 font_cache = {}
 measure_cache = {}
 
-def get_font(size, weight, style):
-    key = (size, weight, style)
+def get_font(family, size, weight, style):
+    key = (family, size, weight, style)
     if key not in font_cache:
-        if "mono" in style:
-            slant = style.replace("mono", "").strip()
-            font = tkinter.font.Font(
-                family="Courier",
-                size=size,
-                weight=weight,
-                slant=slant)
-        else:
-            font = tkinter.font.Font(size=size, weight=weight, slant=style)
+        font = tkinter.font.Font(
+            family=family,
+            size=size,
+            weight=weight,
+            slant=style)
         label = tkinter.Label(font=font)
         font_cache[key] = (font, label)
     return font_cache[key][0]
 
-def get_measure(word, size, weight, style):
-    key = (word, size, weight, style)
+def get_measure(word, family, size, weight, style):
+    key = (word, family, size, weight, style)
     if key not in measure_cache:
-        font = get_font(size, weight, style)
+        font = get_font(family, size, weight, style)
         measure = font.measure(word)
         measure_cache[key] = measure
     return measure_cache[key]
@@ -68,15 +63,6 @@ class DocumentLayout:
 
 
 class BlockLayout:
-    BLOCK_ELEMENTS = [
-        "html", "body", "article", "section", "nav", "aside",
-        "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "header",
-        "footer", "address", "p", "hr", "pre", "blockquote",
-        "ol", "ul", "menu", "li", "dl", "dt", "dd", "figure",
-        "figcaption", "main", "div", "table", "form", "fieldset",
-        "legend", "details", "summary"
-    ]
-
     def __init__(self, node, parent, previous):
         self.node = node
         self.parent = parent
@@ -88,6 +74,9 @@ class BlockLayout:
         self.y = None
         self.width = None
         self.height = None
+
+    def __repr__(self) -> str:
+        return f"BlockLayout(x={self.x} y={self.y} width={self.width} height={self.height} node={self.node})"
 
     def paint(self):
         cmds = []
@@ -114,21 +103,38 @@ class BlockLayout:
     def layout_mode(self):
         if isinstance(self.node, Text):
             return "inline"
-        elif any([isinstance(child, Element) and \
-                  child.tag in self.BLOCK_ELEMENTS
-                  for child in self.node.children]):
-            return "block"
         elif self.node.children:
+            if any(isinstance(child, Element) and \
+                  child.style.get("display", "inline") == "block"
+                  for child in self.node.children):
+                return "block"
             return "inline"
         else:
             return "block"
 
+    def compute_width(self):
+        css_width = self.node.style.get("width", "auto")
+        if css_width == "auto":
+            self.width = self.parent.width
+        elif css_width.endswith("%"):
+            self.width = int(self.parent.width * float(css_width[:-1]) / 100)
+        elif css_width.endswith("px"):
+            self.width = int(float(css_width[:-2]))
+
+    # TODO: Impl this after chapter 7
+    def compute_height(self):
+        css_height = self.node.style.get("height", "auto")
+        if css_height == "auto":
+            self.height = sum([child.height for child in self.children])
+        elif css_height.endswith("px"):
+            self.height = int(float(css_height[:-2]))
 
     def layout(self):
         self.x = self.parent.x + (HSTEP if isinstance(self.parent.node, Element) and self.parent.node.tag == "li" else 0)
-        self.width = self.parent.width
+        self.compute_width()
 
         if self.previous:
+            # NOTE: This doesn't work when a block-layout Elements height uses em/rem-units
             self.y = self.previous.y + self.previous.height
         else:
             self.y = self.parent.y
@@ -146,9 +152,10 @@ class BlockLayout:
             self.cursor_y: float = 0
             self.cursor_x: float = 0
 
-            # TODO: Remove
-            self.style: Literal["roman", "italic", "roman mono", "italic mono"] = "roman"
-            self.pre: bool = False
+            self.pre = True if isinstance(self.node, Element) and \
+                self.node.tag == "pre" or \
+                ("white-space: pre" in self.node.attributes.get("style", "") \
+                 if hasattr(self.node, "attributes") else "") else False
 
             self.line = [] # (x, word, font, color)
             self.recurse(self.node)
@@ -157,13 +164,18 @@ class BlockLayout:
         for child in self.children:
             child.layout()
 
-        if mode == "block":
-            self.height = sum([child.height for child in self.children])
+        if self.node.style.get("height", "auto") == "auto":
+            if mode == "block":
+                self.height = sum([child.height for child in self.children])
+            else:
+                self.height = self.cursor_y
         else:
-            self.height = self.cursor_y
+            self.height = self.node.style["height"]
+
 
     def flush(self):
         if not self.line:
+            self.cursor_y += VSTEP
             return
 
         metrics = [font.metrics() for _, _, font, _ in self.line]
@@ -188,28 +200,37 @@ class BlockLayout:
         weight = node.style["font-weight"]
         style = node.style["font-style"]
         if style == "normal": style = "roman"
-        if self.pre: style += " mono"
         size = int(float(node.style["font-size"][:-2]) * .75)
         color = node.style["color"]
-        font = get_font(size, weight, style)
+        white_space = node.style["white-space"]
+        family = node.style["font-family"]
+        if family != "sans-serif":
+            for font_family in family.split(","):
+                font_family = font_family.replace("\"", "")
+                if check_available_fonts(font_family):
+                    family = font_family
+        font = get_font(family, size, weight, style)
 
         old_word = ""
         if "\u00AD" in word:
             old_word = word
             word = word.replace("\u00AD", "")
 
-        width = get_measure(word, size, weight, style)
-        space = get_measure(" ", size, weight, style)
+        width = get_measure(word, family, size, weight, style)
+        space = get_measure(" ", family, size, weight, style)
 
-        if self.pre:
+        if white_space == "pre":
             if word == "\n":
                 self.flush()
             elif self.cursor_x + width <= self.width - SCROLLBAR_WIDTH:
+                # The code below is the actual code that should be run
+                # if the word isn't "\n". Pre-tags just keep going until.
+                # It just looks ugly rn
                 self.line.append((self.cursor_x, word, font, color))
                 self.cursor_x += width
             else:
                 self.flush()
-                self.line.append((word, size, weight, style, color))
+                self.line.append((self.cursor_x, word, font, color))
                 self.cursor_x += width
         elif self.cursor_x + width + space <= self.width - SCROLLBAR_WIDTH:
             self.line.append((self.cursor_x, word, font, color))
@@ -217,11 +238,11 @@ class BlockLayout:
         else:
             if old_word != "" and "\u00AD" in old_word:
                 parts = old_word.split("\u00AD")
-                hyphen_w = get_measure("-", size, weight, style)
+                hyphen_w = get_measure("-", family, size, weight, style)
                 fitted_parts = []
 
                 for part in parts:
-                    part_w = get_measure(part, size, weight, style)
+                    part_w = get_measure(part, family, size, weight, style)
                     if self.cursor_x + part_w + hyphen_w < self.width - SCROLLBAR_WIDTH:
                         self.line.append((self.cursor_x, part, font, color))
                         self.cursor_x += part_w
@@ -235,13 +256,13 @@ class BlockLayout:
                     # Nextline:
                     self.flush()
                     self.line.append((self.cursor_x, leftover_parts, font, color))
-                    self.cursor_x += get_measure(leftover_parts, size, weight, style) + space
+                    self.cursor_x += get_measure(leftover_parts, family, size, weight, style) + space
             else:
                 self.flush()
                 self.line.append((self.cursor_x, word, font, color))
                 self.cursor_x += width + space
 
-    def recurse(self, node: Union[str, Text, Element]):
+    def recurse(self, node):
         if isinstance(node, Text):
             words = []
             if self.pre:

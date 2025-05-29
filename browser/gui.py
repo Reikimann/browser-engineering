@@ -1,8 +1,7 @@
 import tkinter as tk
-import tkinter.font
 import platform
 
-from browser.css_parser import CSSParser, cascade_priority, style
+from browser.css_parser import CSSParser, cascade_priority, style, init_fonts
 from browser.url import URL
 from browser.layout import DocumentLayout, VSTEP, SCROLLBAR_WIDTH, paint_tree
 from browser.html_parser import Element, HTMLParser
@@ -27,6 +26,7 @@ class Browser:
         self.document = None
 
         self.window = tk.Tk()
+        init_fonts(self.window)
         self.canvas = tk.Canvas(
             self.window,
             width=self.screen_width,
@@ -91,21 +91,21 @@ class Browser:
             self.nodes = HTMLParser(body).parse()
 
         rules = DEFAULT_STYLE_SHEET.copy()
-        links = [node.attributes["href"]
-                for node in tree_to_list(self.nodes, [])
-                if isinstance(node, Element)
-                and node.tag == "link"
-                and node.attributes.get("rel") == "stylesheet"
-                and "href" in node.attributes]
 
-        for link in links:
-            style_url = url.resolve(link)
-            try: # Ingores style sheets that fail to download
-                body = style_url.request()
-            except Exception as e:
-                print(e)
-                continue
-            rules.extend(CSSParser(body).parse())
+        for node in tree_to_list(self.nodes, []):
+            if not isinstance(node, Element): continue
+            if node.tag == "link" and node.attributes.get("rel") == "stylesheet" and \
+                    "href" in node.attributes:
+                link = node.attributes["href"]
+                style_url = url.resolve(link)
+                try: # Ingores style sheets that fail to download
+                    body = style_url.request()
+                except Exception as e:
+                    print(f"Error downloading {style_url}: {e}")
+                    continue
+                rules.extend(CSSParser(body).parse())
+            elif node.tag == "style" and node.children:
+                rules.extend(CSSParser(node.children[0].text).parse())
 
         style(self.nodes, sorted(rules, key=cascade_priority))
         self.redraw()
