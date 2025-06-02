@@ -7,7 +7,6 @@ INHERITED_PROPERTIES = {
     "font-style": "normal",
     "font-weight": "normal",
     "color": "black",
-    "white-space": "normal",
 }
 
 SYSTEM_FONTS = set()
@@ -20,14 +19,6 @@ def check_available_fonts(font):
         return True
 
     return font in SYSTEM_FONTS
-
-# TODO: Remove this after chapter 7
-def processDimension(attr, node):
-    if attr in node.style and node.style[attr].endswith("px"):
-        value = float(node.style[attr][:-2])
-        if value < 0:
-            value = "auto"
-        node.style[attr] = value
 
 def style(node, rules):
     node.style = {}
@@ -66,10 +57,6 @@ def style(node, rules):
             node.style["font-size"] = f"{node_size * parent_px}px"
     elif node.style["font-size"] == "0":
         node.style["font-size"] = "0px"
-
-    # TODO: https://github.com/Spacetoaster/toy-browser/commit/8b75f0f0f1120b96f40ea2a55cf63a19a62b2d45
-    # TODO: Remove this after chapter 7
-    processDimension("height", node)
 
     for child in node.children:
         style(child, rules)

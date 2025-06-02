@@ -11,6 +11,7 @@ font_cache = {}
 measure_cache = {}
 
 def get_font(family, size, weight, style):
+    if style == "oblique": style = "italic"
     key = (family, size, weight, style)
     if key not in font_cache:
         font = tkinter.font.Font(
@@ -22,10 +23,10 @@ def get_font(family, size, weight, style):
         font_cache[key] = (font, label)
     return font_cache[key][0]
 
-def get_measure(word, family, size, weight, style):
+def get_measure(word, family, size, weight, style, font=None):
     key = (word, family, size, weight, style)
     if key not in measure_cache:
-        font = get_font(family, size, weight, style)
+        font = font if font else get_font(family, size, weight, style)
         measure = font.measure(word)
         measure_cache[key] = measure
     return measure_cache[key]
@@ -61,6 +62,82 @@ class DocumentLayout:
     def paint(self):
         return []
 
+class LineLayout:
+    def __init__(self, node, parent, previous):
+        self.node = node
+        self.parent = parent
+        self.previous = previous
+        self.children = []
+
+    def layout(self):
+        self.width = self.parent.width
+        self.x = self.parent.x
+
+        if self.previous:
+            self.y = self.previous.y + self.previous.height
+        else:
+            self.y = self.parent.y
+
+        for word in self.children:
+            word.layout()
+
+        if not self.children:
+            self.height = 0
+            return
+
+        metrics = [word.font.metrics() for word in self.children]
+        max_ascent = max([metric["ascent"] for metric in metrics])
+        baseline = self.y + 1.25 * max_ascent
+        for i, word in enumerate(self.children):
+            word.y = baseline - metrics[i]["ascent"]
+        max_descent = max([metric["descent"] for metric in metrics])
+        self.height = 1.25 * (max_ascent + max_descent)
+
+    def paint(self):
+        return []
+
+class TextLayout:
+    def __init__(self, node, word, parent, previous):
+        self.node = node
+        self.word = word
+        self.children = []
+        self.parent = parent
+        self.previous = previous
+        self.x = None
+        self.y = None
+        self.width = None
+        self.height = None
+        self.font = None
+
+    def layout(self):
+        weight = self.node.style["font-weight"]
+        style = self.node.style["font-style"]
+        if style == "normal": style = "roman"
+        size = int(float(self.node.style["font-size"][:-2]) * .75)
+        family = self.node.style["font-family"]
+        if family != "sans-serif":
+            for font_family in family.split(","):
+                font_family = font_family.replace("\"", "")
+                if check_available_fonts(font_family):
+                    family = font_family
+        self.font = get_font(family, size, weight, style)
+        self.width = get_measure(self.word, family, size, weight, style, self.font)
+
+        if self.previous:
+            space = self.previous.font.measure(" ")
+            self.x = self.previous.x + space + self.previous.width
+        else:
+            self.x = self.parent.x
+
+        self.height = self.font.metrics("linespace")
+
+    def paint(self):
+        color = self.node.style["color"]
+        if emoji.is_emoji(self.word):
+            return [DrawEmoji(self.x, self.y, self.word)]
+        else:
+            return [DrawText(self.x, self.y, self.word, self.font, color)]
+
 
 class BlockLayout:
     def __init__(self, node, parent, previous):
@@ -68,7 +145,6 @@ class BlockLayout:
         self.parent = parent
         self.previous = previous
         self.children = []
-        self.display_list = []
 
         self.x = None
         self.y = None
@@ -81,23 +157,11 @@ class BlockLayout:
     def paint(self):
         cmds = []
         bgcolor = self.node.style.get("background-color", "transparent")
+
         if bgcolor != "transparent":
             x2 = self.x + self.width
             y2 = self.y + self.height
             cmds.append(DrawRect(self.x, self.y, x2, y2, bgcolor))
-        if isinstance(self.node, Element) and self.node.tag == "li" and \
-            isinstance(self.node.parent, Element) and self.node.parent.tag == "ul":
-            x2 = self.x + 4
-            y1 = self.y + self.height/2 - 2
-            y2 = y1 + 4
-            cmds.append(DrawRect(self.x, y1, x2, y2, "black"))
-
-        if self.layout_mode() == "inline":
-            for x, y, word, font, color in self.display_list:
-                if emoji.is_emoji(word):
-                    cmds.append(DrawEmoji(x, y, word))
-                else:
-                    cmds.append(DrawText(x, y, word, font, color))
         return cmds
 
     def layout_mode(self):
@@ -112,25 +176,8 @@ class BlockLayout:
         else:
             return "block"
 
-    def compute_width(self):
-        css_width = self.node.style.get("width", "auto")
-        if css_width == "auto":
-            self.width = self.parent.width
-        elif css_width.endswith("%"):
-            self.width = int(self.parent.width * float(css_width[:-1]) / 100)
-        elif css_width.endswith("px"):
-            self.width = int(float(css_width[:-2]))
-
-    # TODO: Impl this after chapter 7
-    def compute_height(self):
-        css_height = self.node.style.get("height", "auto")
-        if css_height == "auto":
-            self.height = sum([child.height for child in self.children])
-        elif css_height.endswith("px"):
-            self.height = int(float(css_height[:-2]))
-
     def layout(self):
-        self.x = self.parent.x + (HSTEP if isinstance(self.parent.node, Element) and self.parent.node.tag == "li" else 0)
+        self.x = self.parent.x
         self.compute_width()
 
         if self.previous:
@@ -149,60 +196,19 @@ class BlockLayout:
                 self.children.append(next)
                 previous = next
         else:
-            self.cursor_y: float = 0
-            self.cursor_x: float = 0
-
-            self.pre = True if isinstance(self.node, Element) and \
-                self.node.tag == "pre" or \
-                ("white-space: pre" in self.node.attributes.get("style", "") \
-                 if hasattr(self.node, "attributes") else "") else False
-
-            self.line = [] # (x, word, font, color)
+            self.new_line()
             self.recurse(self.node)
-            self.flush()
 
         for child in self.children:
             child.layout()
 
-        if self.node.style.get("height", "auto") == "auto":
-            if mode == "block":
-                self.height = sum([child.height for child in self.children])
-            else:
-                self.height = self.cursor_y
-        else:
-            self.height = self.node.style["height"]
-
-
-    def flush(self):
-        if not self.line:
-            self.cursor_y += VSTEP
-            return
-
-        metrics = [font.metrics() for _, _, font, _ in self.line]
-        max_ascent = max([metric["ascent"] for metric in metrics])
-        baseline = self.cursor_y + 1.25 * max_ascent
-
-        for i, (rel_x, word, font, color) in enumerate(self.line):
-            y = self.y + baseline - metrics[i]["ascent"]
-
-            x = self.x + rel_x
-            if isinstance(self.node, Element) and self.node.tag == "li":
-                x += HSTEP
-
-            self.display_list.append((x, y, word, font, color))
-
-        max_descent = max([metric["descent"] for metric in metrics])
-        self.cursor_y = baseline + 1.25 * max_descent
-        self.cursor_x = 0
-        self.line = []
+        self.compute_height()
 
     def word(self, node, word):
         weight = node.style["font-weight"]
         style = node.style["font-style"]
         if style == "normal": style = "roman"
         size = int(float(node.style["font-size"][:-2]) * .75)
-        color = node.style["color"]
-        white_space = node.style["white-space"]
         family = node.style["font-family"]
         if family != "sans-serif":
             for font_family in family.split(","):
@@ -211,78 +217,44 @@ class BlockLayout:
                     family = font_family
         font = get_font(family, size, weight, style)
 
-        old_word = ""
-        if "\u00AD" in word:
-            old_word = word
-            word = word.replace("\u00AD", "")
+        width = get_measure(word, family, size, weight, style, font)
+        if self.cursor_x + width > self.width - SCROLLBAR_WIDTH:
+            self.new_line()
 
-        width = get_measure(word, family, size, weight, style)
-        space = get_measure(" ", family, size, weight, style)
-
-        if white_space == "pre":
-            if word == "\n":
-                self.flush()
-            elif self.cursor_x + width <= self.width - SCROLLBAR_WIDTH:
-                # The code below is the actual code that should be run
-                # if the word isn't "\n". Pre-tags just keep going until.
-                # It just looks ugly rn
-                self.line.append((self.cursor_x, word, font, color))
-                self.cursor_x += width
-            else:
-                self.flush()
-                self.line.append((self.cursor_x, word, font, color))
-                self.cursor_x += width
-        elif self.cursor_x + width + space <= self.width - SCROLLBAR_WIDTH:
-            self.line.append((self.cursor_x, word, font, color))
-            self.cursor_x += width + space
-        else:
-            if old_word != "" and "\u00AD" in old_word:
-                parts = old_word.split("\u00AD")
-                hyphen_w = get_measure("-", family, size, weight, style)
-                fitted_parts = []
-
-                for part in parts:
-                    part_w = get_measure(part, family, size, weight, style)
-                    if self.cursor_x + part_w + hyphen_w < self.width - SCROLLBAR_WIDTH:
-                        self.line.append((self.cursor_x, part, font, color))
-                        self.cursor_x += part_w
-                        fitted_parts.append(part)
-                    else:
-                        break
-
-                leftover_parts = "".join(parts[len(fitted_parts):])
-                if leftover_parts:
-                    self.line.append((self.cursor_x, "-", font, color))
-                    # Nextline:
-                    self.flush()
-                    self.line.append((self.cursor_x, leftover_parts, font, color))
-                    self.cursor_x += get_measure(leftover_parts, family, size, weight, style) + space
-            else:
-                self.flush()
-                self.line.append((self.cursor_x, word, font, color))
-                self.cursor_x += width + space
+        line = self.children[-1]
+        previous_word = line.children[-1] if line.children else None
+        text = TextLayout(node, word, line, previous_word)
+        line.children.append(text)
+        self.cursor_x += width + get_measure(" ", family, size, weight, style, font)
 
     def recurse(self, node):
         if isinstance(node, Text):
-            words = []
-            if self.pre:
-                word = ""
-                for c in node.text:
-                    if c == " " or c == "\n":
-                        if word:
-                            words.append(word)
-                        word = ""
-                        words.append(c)
-                    else:
-                        word += c
-                if word:
-                    words.append(word)
-            else:
-                words = node.text.split()
-            for word in words:
+            for word in node.text.split():
                 self.word(node, word)
         else:
             if node.tag == "br" or node == "br /":
-                self.flush()
+                self.new_line()
             for child in node.children:
                 self.recurse(child)
+
+    def new_line(self):
+        self.cursor_x = 0
+        last_line = self.children[-1] if self.children else None
+        new_line = LineLayout(self.node, self, last_line)
+        self.children.append(new_line)
+
+    def compute_width(self):
+        css_width = self.node.style.get("width", "auto")
+        if css_width == "auto":
+            self.width = self.parent.width
+        elif css_width.endswith("%"):
+            self.width = int(self.parent.width * float(css_width[:-1]) / 100)
+        elif css_width.endswith("px"):
+            self.width = int(float(css_width[:-2]))
+
+    def compute_height(self):
+        css_height = self.node.style.get("height", "auto")
+        if css_height == "auto":
+            self.height = sum([child.height for child in self.children])
+        elif css_height.endswith("px"):
+            self.height = int(float(css_height[:-2]))

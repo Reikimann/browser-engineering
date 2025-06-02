@@ -41,7 +41,7 @@ summary { display: block; }
 
 /* Default styling */
 abbr { color: orange; font-style: italic; }
-pre { background-color: gray; white-space: pre; }
+pre { background-color: gray; }
 code { font-family: "Courier New", monospace; }
 nav { background-color: lightgray; }
 a { color: blue; }

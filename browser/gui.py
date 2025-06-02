@@ -2,8 +2,7 @@ import tkinter as tk
 import platform
 
 from browser.css_parser import CSSParser, cascade_priority, style, init_fonts
-from browser.url import URL
-from browser.layout import DocumentLayout, VSTEP, SCROLLBAR_WIDTH, paint_tree
+from browser.layout import DocumentLayout, VSTEP, SCROLLBAR_WIDTH, paint_tree, Text
 from browser.html_parser import Element, HTMLParser
 
 SCROLL_STEP = 100
@@ -24,6 +23,7 @@ class Browser:
         self.blank = False
         self.nodes = []
         self.document = None
+        self.url = None
 
         self.window = tk.Tk()
         init_fonts(self.window)
@@ -40,6 +40,7 @@ class Browser:
 
         self.window.bind("<Down>", self.scrolldown)
         self.window.bind("<Up>", self.scrollup)
+        self.window.bind("<Button-1>", self.click)
         # TEST: Is this necesarry on windows or mac?
         if self.system == "Linux":
             self.window.bind("<Button-5>", self.scroll_linux)
@@ -72,8 +73,8 @@ class Browser:
         if self.document.height > self.screen_height:
             self.draw_scrollbar()
 
-    def load(self, url_str):
-        url = URL(url_str)
+    def load(self, url):
+        self.url = url
         body = url.request()
 
         if not body:
@@ -122,6 +123,24 @@ class Browser:
         y1 = y0 + scrollbar_height
 
         self.canvas.create_rectangle(x0, y0, x1, y1, fill="blue")
+
+    def click(self, e):
+        x, y = e.x, e.y
+        y += self.scroll
+
+        objs = [obj for obj in tree_to_list(self.document, [])
+                if obj.x <= x < obj.x + obj.width
+                and obj.y <= y < obj.y + obj.height]
+        if not objs: return
+
+        elt = objs[-1].node
+        while elt:
+            if isinstance(elt, Text):
+                pass
+            elif elt.tag == "a" and "href" in elt.attributes:
+                url = self.url.resolve(elt.attributes["href"])
+                return self.load(url)
+            elt = elt.parent
 
     def scrollup(self, _):
         self.scroll = max(0, self.scroll - SCROLL_STEP)

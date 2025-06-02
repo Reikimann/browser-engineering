@@ -57,6 +57,13 @@ class URL:
         else:
             self.is_malformed = True
 
+    def __str__(self):
+        port_part = ":" + str(self.port)
+        if self.scheme == "https" and self.port == 443:
+            port_part = ""
+        if self.scheme == "http" and self.port == 80:
+            port_part = ""
+        return self.scheme + "://" + self.host + port_part + self.path
 
     def request(self, num_redirects = 0):
         if self.is_malformed:

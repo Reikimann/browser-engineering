@@ -38,7 +38,7 @@ class DrawRect:
 
 class DrawEmoji:
     def __init__(self, x1, y1, emoji):
-        self.size = 24
+        self.size = 20
         self.top = y1
         self.left = x1
         self.bottom = y1 + self.size
