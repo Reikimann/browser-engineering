@@ -2,11 +2,10 @@ import tkinter as tk
 import platform
 
 from browser.css_parser import CSSParser, cascade_priority, style, init_fonts
-from browser.layout import DocumentLayout, VSTEP, SCROLLBAR_WIDTH, paint_tree, Text
+from browser.layout import DocumentLayout, paint_tree, Text
 from browser.html_parser import Element, HTMLParser
+from browser.constants import SCROLL_STEP, WIDTH, HEIGHT, VSTEP, SCROLLBAR_WIDTH
 
-SCROLL_STEP = 100
-WIDTH, HEIGHT = 800, 600
 DEFAULT_STYLE_SHEET = CSSParser(open("data/browser.css").read()).parse()
 
 def tree_to_list(tree, list):
@@ -57,8 +56,7 @@ class Browser:
         self.redraw()
 
     def redraw(self):
-        self.document = DocumentLayout(self.nodes, self.screen_width)
-        self.document.layout()
+        self.document.layout(self.screen_width)
         self.display_list = []
         paint_tree(self.document, self.display_list)
         self.draw()
@@ -109,6 +107,8 @@ class Browser:
                 rules.extend(CSSParser(node.children[0].text).parse())
 
         style(self.nodes, sorted(rules, key=cascade_priority))
+        self.scroll = 0
+        self.document = DocumentLayout(self.nodes)
         self.redraw()
 
     def draw_scrollbar(self):

@@ -3,7 +3,7 @@ import ssl
 import time
 import gzip
 
-MAX_REDIRECTS = 3
+from browser.constants import MAX_REDIRECTS
 
 # Key: (scheme, host, port)
 sockets = {}

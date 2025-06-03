@@ -1,11 +1,9 @@
 import emoji
 from browser.css_parser import check_available_fonts
 from browser.draw import DrawRect, DrawText, DrawEmoji
+from browser.constants import WIDTH, HSTEP, VSTEP, SCROLLBAR_WIDTH
 from browser.html_parser import Text, Element
 import tkinter.font
-
-HSTEP, VSTEP = 13, 18
-SCROLLBAR_WIDTH = 12
 
 font_cache = {}
 measure_cache = {}
@@ -38,25 +36,21 @@ def paint_tree(layout_object, display_list):
         paint_tree(child, display_list)
 
 class DocumentLayout:
-    def __init__(self, node, screen_width):
+    def __init__(self, node):
         self.node = node
         self.parent = None
         self.children = []
 
-        self.screen_width = screen_width
-        self.x = None
-        self.y = None
-        self.width = None
-        self.height = None
-
-    def layout(self):
-        child = BlockLayout(self.node, self, None)
-        self.children.append(child)
-
-        self.width = self.screen_width - 2*HSTEP
+    def layout(self, screen_width = WIDTH):
+        self.children = []
+        self.width = screen_width - 2*HSTEP
         self.x = HSTEP
         self.y = VSTEP
+
+        child = BlockLayout(self.node, self, None)
+        self.children.append(child)
         child.layout()
+
         self.height = child.height
 
     def paint(self):
