@@ -5,6 +5,7 @@ from browser.css_parser import CSSParser, cascade_priority, style, init_fonts
 from browser.layout import DocumentLayout, paint_tree, Text
 from browser.html_parser import Element, HTMLParser
 from browser.constants import SCROLL_STEP, WIDTH, HEIGHT, VSTEP, SCROLLBAR_WIDTH
+from browser.url import URL
 
 DEFAULT_STYLE_SHEET = CSSParser(open("data/browser.css").read()).parse()
 
@@ -17,59 +18,94 @@ def tree_to_list(tree, list):
 
 class Browser:
     def __init__(self):
-        self.screen_width = WIDTH
-        self.screen_height = HEIGHT
-        self.blank = False
-        self.nodes = []
-        self.document = None
-        self.url = None
+        self.tabs = []
+        self.active_tab: Tab
 
+        self.height = HEIGHT
+        self.width = WIDTH
         self.window = tk.Tk()
         init_fonts(self.window)
-        self.canvas = tk.Canvas(
-            self.window,
-            width=self.screen_width,
-            height=self.screen_height,
-            bg="white"
-        )
+        self.canvas = tk.Canvas(self.window,
+                                width=self.width,
+                                height=self.height,
+                                bg="white")
         self.canvas.pack(fill=tk.BOTH, expand=1)
 
-        self.scroll = 0
-        self.system = platform.system()
+        self.system_platform = platform.system()
 
-        self.window.bind("<Down>", self.scrolldown)
-        self.window.bind("<Up>", self.scrollup)
-        self.window.bind("<Button-1>", self.click)
+        self.window.bind("<Down>", self.handle_down)
+        self.window.bind("<Up>", self.handle_up)
+        self.window.bind("<Button-1>", self.handle_click)
         # TEST: Is this necesarry on windows or mac?
-        if self.system == "Linux":
-            self.window.bind("<Button-5>", self.scroll_linux)
-            self.window.bind("<Button-4>", self.scroll_linux)
+        if self.system_platform == "Linux":
+            self.window.bind("<Button-5>", self.handle_scroll_linux)
+            self.window.bind("<Button-4>", self.handle_scroll_linux)
         else:
-            self.window.bind("<MouseWheel>", self.scrollmouse)
+            self.window.bind("<MouseWheel>", self.handle_scroll_mouse)
+        self.window.bind("<Configure>", self.handle_resize)
 
-        if not self.blank:
-            self.window.bind("<Configure>", self.resize)
-
-    # FIX: Not debounced -> Performance: poor
-    def resize(self, e):
-        self.screen_height, self.screen_width = e.height, e.width
-        self.redraw()
-
-    def redraw(self):
-        self.document.layout(self.screen_width)
-        self.display_list = []
-        paint_tree(self.document, self.display_list)
+    def new_tab(self, url):
+        new_tab = Tab()
+        new_tab.load(url)
+        self.active_tab = new_tab
+        self.tabs.append(new_tab)
         self.draw()
 
     def draw(self):
         self.canvas.delete("all")
-        for cmd in self.display_list:
-            if cmd.top > self.scroll + self.screen_height: continue
-            if cmd.bottom < self.scroll: continue
-            cmd.execute(self.scroll, self.canvas)
+        self.active_tab.draw(self.canvas, self.width, self.height)
 
-        if self.document.height > self.screen_height:
-            self.draw_scrollbar()
+    def handle_resize(self, e):
+        self.width, self.height = e.width, e.height
+        self.active_tab.resize(self.width)
+        self.draw()
+
+    def handle_scroll_mouse(self, e):
+        self.active_tab.scrollmouse(e.delta, self.system_platform)
+        self.draw()
+
+    def handle_scroll_linux(self, e):
+        if e.num == 5:
+            self.active_tab.scrolldown(self.height)
+        elif e.num == 4:
+            self.active_tab.scrollup()
+        self.draw()
+
+    def handle_click(self, e):
+        self.active_tab.click(e.x, e.y)
+        self.draw()
+
+    def handle_down(self, _):
+        self.active_tab.scrolldown(self.height)
+        self.draw()
+
+    def handle_up(self, _):
+        self.active_tab.scrollup()
+        self.draw()
+
+
+class Tab:
+    def __init__(self):
+        self.blank = False
+        self.nodes = []
+        self.document: DocumentLayout
+        self.url: URL
+        self.scroll = 0
+
+    # FIX: Not debounced -> Performance: poor
+    def resize(self, width):
+        self.document.layout(width)
+        self.display_list = []
+        paint_tree(self.document, self.display_list)
+
+    def draw(self, canvas, width, height):
+        for cmd in self.display_list:
+            if cmd.top > self.scroll + height: continue
+            if cmd.bottom < self.scroll: continue
+            cmd.execute(self.scroll, canvas)
+
+        if self.document.height > height:
+            self.draw_scrollbar(canvas,  width, height)
 
     def load(self, url):
         self.url = url
@@ -109,23 +145,24 @@ class Browser:
         style(self.nodes, sorted(rules, key=cascade_priority))
         self.scroll = 0
         self.document = DocumentLayout(self.nodes)
-        self.redraw()
+        self.document.layout()
+        self.display_list = []
+        paint_tree(self.document, self.display_list)
 
-    def draw_scrollbar(self):
-        percent_shown = self.screen_height / self.document.height # visible content
+    def draw_scrollbar(self, canvas, width, height):
+        percent_shown = height / self.document.height # visible content
         percent_offset = self.scroll / self.document.height # fraction of content scrolled
         # if 20% is visible then scrollbar thumb should be 20% of screenheight
-        scrollbar_height = percent_shown * self.screen_height
+        scrollbar_height = percent_shown * height
 
-        x0 = self.screen_width - SCROLLBAR_WIDTH
-        x1 = self.screen_width
-        y0 = percent_offset * self.screen_height
+        x0 = width - SCROLLBAR_WIDTH
+        x1 = width
+        y0 = percent_offset * height
         y1 = y0 + scrollbar_height
 
-        self.canvas.create_rectangle(x0, y0, x1, y1, fill="blue")
+        canvas.create_rectangle(x0, y0, x1, y1, fill="blue")
 
-    def click(self, e):
-        x, y = e.x, e.y
+    def click(self, x, y):
         y += self.scroll
 
         objs = [obj for obj in tree_to_list(self.document, [])
@@ -142,31 +179,22 @@ class Browser:
                 return self.load(url)
             elt = elt.parent
 
-    def scrollup(self, _):
+    def scrollup(self):
         self.scroll = max(0, self.scroll - SCROLL_STEP)
-        self.draw()
 
-    def scrolldown(self, _):
-        max_y = max(self.document.height + 2*VSTEP - self.screen_height, 0)
+    def scrolldown(self, height):
+        max_y = max(self.document.height + 2*VSTEP - height, 0)
         self.scroll = min(self.scroll + SCROLL_STEP, max_y)
-        self.draw()
-
-    def scroll_linux(self, e):
-        if e.num == 5:
-            self.scrolldown(e)
-        elif e.num == 4:
-            self.scrollup(e)
 
     # NOTE: Darwin and Windows scrolling not tested
     # It's currently possible to scroll past bottom
-    def scrollmouse(self, e):
-        if self.system == "Windows":
-            delta = -1 * (e.delta // 120)
-        elif self.system == "Darwin":
-            delta = e.delta
+    def scrollmouse(self, delta, platform):
+        if platform == "Windows":
+            delta = -1 * (delta // 120)
+        elif platform == "Darwin":
+            delta = delta
         else:
             delta = 0
 
         self.scroll += delta * SCROLL_STEP
         self.scroll = max(0, self.scroll)
-        self.draw()
