@@ -46,7 +46,7 @@ class Browser:
 
     def new_tab(self, url):
         new_tab = Tab()
-        new_tab.load(url)
+        new_tab.load(url, self.width)
         self.active_tab = new_tab
         self.tabs.append(new_tab)
         self.draw()
@@ -72,7 +72,7 @@ class Browser:
         self.draw()
 
     def handle_click(self, e):
-        self.active_tab.click(e.x, e.y)
+        self.active_tab.click(e.x, e.y, self.width)
         self.draw()
 
     def handle_down(self, _):
@@ -107,7 +107,7 @@ class Tab:
         if self.document.height > height:
             self.draw_scrollbar(canvas,  width, height)
 
-    def load(self, url):
+    def load(self, url, width):
         self.url = url
         body = url.request()
 
@@ -145,7 +145,7 @@ class Tab:
         style(self.nodes, sorted(rules, key=cascade_priority))
         self.scroll = 0
         self.document = DocumentLayout(self.nodes)
-        self.document.layout()
+        self.document.layout(width)
         self.display_list = []
         paint_tree(self.document, self.display_list)
 
@@ -162,7 +162,7 @@ class Tab:
 
         canvas.create_rectangle(x0, y0, x1, y1, fill="blue")
 
-    def click(self, x, y):
+    def click(self, x, y, width):
         y += self.scroll
 
         objs = [obj for obj in tree_to_list(self.document, [])
@@ -176,7 +176,7 @@ class Tab:
                 pass
             elif elt.tag == "a" and "href" in elt.attributes:
                 url = self.url.resolve(elt.attributes["href"])
-                return self.load(url)
+                return self.load(url, width)
             elt = elt.parent
 
     def scrollup(self):
